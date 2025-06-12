@@ -2,156 +2,111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>MFS25 - 2D Blocky Mode</title>
+  <meta charset="UTF-8">
+  <title>MFS25 – A340 Flight Sim</title>
   <style>
-    html, body {
-      margin: 0;
-      overflow: hidden;
-      background: #000;
-      font-family: sans-serif;
-    }
-    canvas {
-      display: block;
-      background: #111;
-    }
-    .controls {
-      position: absolute;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 10px;
-      z-index: 5;
-    }
-    .controls button {
-      width: 60px;
-      height: 60px;
-      border: none;
-      border-radius: 10px;
-      background: rgba(200, 200, 200, 0.3);
-      color: white;
-      font-size: 20px;
-      backdrop-filter: blur(4px);
-    }
-    .hud {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      color: white;
-      font-size: 18px;
-      background: rgba(0,0,0,0.3);
-      padding: 8px;
-      border-radius: 5px;
-    }
+    body { margin:0; overflow:hidden; background:#000; }
+    #hud { position:absolute; top:10px; left:10px; color:#fff; font:18px sans-serif; z-index:2; }
+    .controls { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:2 }
+    .controls button { padding:12px 18px; font-size:18px; border:none; border-radius:4px; background:rgba(255,255,255,0.2); color:#fff; }
+    .controls button:active { background:rgba(255,255,255,0.4); }
   </style>
 </head>
 <body>
-  <canvas id="gameCanvas" width="1280" height="720"></canvas>
-  <div class="hud">
-    Speed: <span id="speed">0</span> knots<br>
-    Heading: <span id="heading">0</span>°
-  </div>
+  <div id="hud">Speed: <span id="speed">0</span> m/s</div>
   <div class="controls">
-    <button onclick="turnLeft()">⟲</button>
-    <button onclick="decelerate()">–</button>
-    <button onclick="accelerate()">+</button>
-    <button onclick="turnRight()">⟳</button>
+    <button id="leftBtn">◀ Turn</button>
+    <button id="thrustUpBtn">▲ Throttle</button>
+    <button id="thrustDnBtn">▼ Throttle</button>
+    <button id="rightBtn">▶ Turn</button>
   </div>
 
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    let keys = {};
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
 
-    // Blocky A340 (2D rectangle)
-    let plane = {
-      x: 500,
-      y: 500,
-      speed: 0,
-      angle: 0,
-      width: 60,
-      height: 20,
-      maxSpeed: 5,
-      acceleration: 0.05
-    };
+    // Scene setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 1, 10000);
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
 
-    // Blocky city map
-    const mapCanvas = document.createElement('canvas');
-    mapCanvas.width = 3000;
-    mapCanvas.height = 3000;
-    const mapCtx = mapCanvas.getContext('2d');
+    // Skybox
+    const skyLoader = new THREE.CubeTextureLoader().setPath('https://threejs.org/examples/textures/cube/skybox/');
+    const skybox = skyLoader.load(['px.jpg','nx.jpg','py.jpg','ny.jpg','pz.jpg','nz.jpg']);
+    scene.background = skybox;
 
-    function drawCityMap() {
-      mapCtx.fillStyle = '#222';
-      mapCtx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
-      mapCtx.fillStyle = '#444';
-      for (let i = 0; i < 300; i++) {
-        const x = Math.random() * mapCanvas.width;
-        const y = Math.random() * mapCanvas.height;
-        const w = 40 + Math.random() * 60;
-        const h = 40 + Math.random() * 60;
-        mapCtx.fillRect(x, y, w, h);
-      }
-      mapCtx.fillStyle = '#3366cc';
-      mapCtx.fillRect(1000, 1500, 800, 200); // Water block
-      mapCtx.fillStyle = '#888';
-      mapCtx.fillRect(1400, 1800, 200, 20); // Bridge
+    // Ground plane
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(10000,10000),
+      new THREE.MeshPhongMaterial({ color: 0x228B22 })
+    );
+    ground.rotation.x = -Math.PI/2;
+    scene.add(ground);
+
+    // Lighting
+    scene.add(new THREE.DirectionalLight(0xffffff, 0.8).position.set(100,200,100));
+    scene.add(new THREE.AmbientLight(0x666666));
+
+    // Variables
+    let airplane, velocity = 0, yaw = 0;
+    const loader = new GLTFLoader();
+    loader.load('https://fetchcfd.com/threeDViewGltf/4934-airbus-a340-3d-model', gltf => {
+      airplane = gltf.scene;
+      airplane.scale.set(0.5,0.5,0.5);
+      airplane.position.set(0,50,0);
+      scene.add(airplane);
+      animate();
+    });
+
+    // Control functions
+    function throttleChange(delta) {
+      velocity = Math.min(Math.max(velocity + delta, 0), 50);
+    }
+    function yawChange(delta) {
+      yaw += delta;
     }
 
-    drawCityMap();
+    // Touch & click handlers
+    document.getElementById('thrustUpBtn').onpointerdown = () => throttleChange(1);
+    document.getElementById('thrustDnBtn').onpointerdown = () => throttleChange(-1);
+    document.getElementById('leftBtn').onpointerdown = () => yawChange(0.02);
+    document.getElementById('rightBtn').onpointerdown = () => yawChange(-0.02);
 
-    function update() {
-      if (keys['ArrowLeft']) plane.angle -= 2;
-      if (keys['ArrowRight']) plane.angle += 2;
-      if (keys['ArrowUp']) accelerate();
-      if (keys['ArrowDown']) decelerate();
+    // Keyboard controls
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowUp' || e.key === 'w') throttleChange(1);
+      if (e.key === 'ArrowDown' || e.key === 's') throttleChange(-1);
+      if (e.key === 'ArrowLeft') yawChange(0.02);
+      if (e.key === 'ArrowRight') yawChange(-0.02);
+    });
 
-      let rad = plane.angle * Math.PI / 180;
-      plane.x += Math.cos(rad) * plane.speed;
-      plane.y += Math.sin(rad) * plane.speed;
+    // Animation loop
+    let camTarget = new THREE.Vector3();
+    function animate() {
+      if (!airplane) return;
+      airplane.rotation.y = yaw;
+      const forward = new THREE.Vector3(0,0,1).applyQuaternion(airplane.quaternion);
+      airplane.position.addScaledVector(forward, velocity * 0.1);
 
-      document.getElementById("speed").innerText = Math.round(plane.speed * 100);
-      document.getElementById("heading").innerText = (plane.angle % 360 + 360) % 360;
+      // Chase camera
+      camTarget.copy(airplane.position)
+               .add(forward.clone().multiplyScalar(-100))
+               .add(new THREE.Vector3(0,40,0));
+      camera.position.lerp(camTarget, 0.1);
+      camera.lookAt(airplane.position);
+
+      document.getElementById('speed').innerText = Math.round(velocity);
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
     }
-
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      let offsetX = canvas.width / 2 - plane.x;
-      let offsetY = canvas.height / 2 - plane.y;
-      ctx.drawImage(mapCanvas, offsetX, offsetY);
-
-      // Draw plane as blocky shape
-      ctx.save();
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate(plane.angle * Math.PI / 180);
-      ctx.fillStyle = "#FFCC00";
-      ctx.fillRect(-plane.width/2, -plane.height/2, plane.width, plane.height);
-      ctx.restore();
-    }
-
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
-
-    function turnLeft() { plane.angle -= 5; }
-    function turnRight() { plane.angle += 5; }
-    function accelerate() {
-      plane.speed += plane.acceleration;
-      if (plane.speed > plane.maxSpeed) plane.speed = plane.maxSpeed;
-    }
-    function decelerate() {
-      plane.speed -= plane.acceleration;
-      if (plane.speed < 0) plane.speed = 0;
-    }
-
-    window.addEventListener("keydown", e => keys[e.key] = true);
-    window.addEventListener("keyup", e => keys[e.key] = false);
-
-    loop();
   </script>
 </body>
 </html>
