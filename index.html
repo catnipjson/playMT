@@ -1,111 +1,203 @@
-
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>FS25 – A340 Flight Sim</title>
+  <title>THE APOCALYPSE</title>
   <style>
-    body { margin:0; overflow:hidden; background:#000; }
-    #hud { position:absolute; top:10px; left:10px; color:#fff; font:18px sans-serif; z-index:2; }
-    .controls { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:2 }
-    .controls button { padding:12px 18px; font-size:18px; border:none; border-radius:4px; background:rgba(255,255,255,0.2); color:#fff; }
-    .controls button:active { background:rgba(255,255,255,0.4); }
+    html, body { margin: 0; overflow: hidden; background: black; font-family: monospace; }
+    canvas { display: block; background: #1a1a1a; image-rendering: pixelated; }
+    #ui {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; color: white;
+    }
+    .btn { pointer-events: auto; background: #222; padding: 10px; border: 2px solid #555; color: white; cursor: pointer; }
+    #menu, #gameOver { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; }
+    #touchControls { position: absolute; bottom: 10px; width: 100%; display: flex; justify-content: space-between; pointer-events: auto; }
+    .controlBtn { background: rgba(255,255,255,0.2); padding: 20px; margin: 10px; border-radius: 10px; color: white; font-size: 18px; }
+    #countdownOverlay {
+      position: absolute; width: 100%; height: 100%; top: 0; left: 0;
+      background: rgba(0,0,0,0.6); display: none; justify-content: center; align-items: center;
+      font-size: 60px;
+    }
   </style>
 </head>
 <body>
-  <div id="hud">Speed: <span id="speed">0</span> m/s</div>
-  <div class="controls">
-    <button id="leftBtn">◀ Turn</button>
-    <button id="thrustUpBtn">▲ Throttle</button>
-    <button id="thrustDnBtn">▼ Throttle</button>
-    <button id="rightBtn">▶ Turn</button>
+  <canvas id="gameCanvas" width="800" height="400"></canvas>
+  <div id="ui">
+    <div id="menu">
+      <h1>THE APOCALYPSE</h1>
+      <p>Tap to play. Use points to unlock more areas on the map.</p>
+      <div class="btn" onclick="startGame()">Play</div>
+    </div>
+    <div id="gameOver" style="display: none;">
+      <h1>GAME OVER</h1>
+      <p id="zombieCount">Zombies killed: 0</p>
+      <p id="matchTime">Time survived: 00:00</p>
+    </div>
+    <div id="countdownOverlay">5</div>
+    <div id="touchControls">
+      <div class="controlBtn" ontouchstart="moveLeft=true" ontouchend="moveLeft=false">⬅️</div>
+      <div class="controlBtn" ontouchstart="shoot=true" ontouchend="shoot=false">🔫</div>
+      <div class="controlBtn" ontouchstart="moveRight=true" ontouchend="moveRight=false">➡️</div>
+    </div>
   </div>
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
 
-  <script type="module">
-    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js';
-    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/loaders/GLTFLoader.js';
+    // Game state
+    let player = { x: 100, y: 300, hp: 150, kills: 0, points: 0, gunCooldown: 0 };
+    let zombies = [];
+    let bullets = [];
+    let doors = [];
+    let mapWidth = 3000;
+    let cameraX = 0;
+    let lastRegen = 0, startTime, gameTime = 0;
+    let isGameOver = false;
+    let moveLeft = false, moveRight = false, shoot = false;
+    let countdown = 5;
 
-    // Scene setup
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 1, 10000);
-    const renderer = new THREE.WebGLRenderer({ antialias:true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth/window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // Skybox
-    const skyLoader = new THREE.CubeTextureLoader().setPath('https://threejs.org/examples/textures/cube/skybox/');
-    const skybox = skyLoader.load(['px.jpg','nx.jpg','py.jpg','ny.jpg','pz.jpg','nz.jpg']);
-    scene.background = skybox;
-
-    // Ground plane
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(10000,10000),
-      new THREE.MeshPhongMaterial({ color: 0x228B22 })
-    );
-    ground.rotation.x = -Math.PI/2;
-    scene.add(ground);
-
-    // Lighting
-    scene.add(new THREE.DirectionalLight(0xffffff, 0.8).position.set(100,200,100));
-    scene.add(new THREE.AmbientLight(0x666666));
-
-    // Variables
-    let airplane, velocity = 0, yaw = 0;
-    const loader = new GLTFLoader();
-    loader.load('https://fetchcfd.com/threeDViewGltf/4934-airbus-a340-3d-model', gltf => {
-      airplane = gltf.scene;
-      airplane.scale.set(0.5,0.5,0.5);
-      airplane.position.set(0,50,0);
-      scene.add(airplane);
-      animate();
-    });
-
-    // Control functions
-    function throttleChange(delta) {
-      velocity = Math.min(Math.max(velocity + delta, 0), 50);
-    }
-    function yawChange(delta) {
-      yaw += delta;
+    function startGame() {
+      document.getElementById("menu").style.display = "none";
+      document.getElementById("countdownOverlay").style.display = "flex";
+      player = { x: 100, y: 300, hp: 150, kills: 0, points: 0, gunCooldown: 0 };
+      zombies = [];
+      bullets = [];
+      cameraX = 0;
+      isGameOver = false;
+      startTime = Date.now();
+      countdown = 5;
+      for (let i = 1; i <= 25; i++) {
+        doors.push({ x: i * 300, unlocked: i === 1, cost: i * 200 });
+      }
+      countDown();
     }
 
-    // Touch & click handlers
-    document.getElementById('thrustUpBtn').onpointerdown = () => throttleChange(1);
-    document.getElementById('thrustDnBtn').onpointerdown = () => throttleChange(-1);
-    document.getElementById('leftBtn').onpointerdown = () => yawChange(0.02);
-    document.getElementById('rightBtn').onpointerdown = () => yawChange(-0.02);
+    function countDown() {
+      document.getElementById("countdownOverlay").textContent = countdown;
+      if (countdown <= 0) {
+        document.getElementById("countdownOverlay").style.display = "none";
+        requestAnimationFrame(gameLoop);
+      } else {
+        countdown--;
+        setTimeout(countDown, 1000);
+      }
+    }
 
-    // Keyboard controls
-    window.addEventListener('keydown', e => {
-      if (e.key === 'ArrowUp' || e.key === 'w') throttleChange(1);
-      if (e.key === 'ArrowDown' || e.key === 's') throttleChange(-1);
-      if (e.key === 'ArrowLeft') yawChange(0.02);
-      if (e.key === 'ArrowRight') yawChange(-0.02);
-    });
+    function spawnZombie() {
+      if (Math.random() < 0.005) {
+        let spawnX = cameraX + canvas.width + 50;
+        if (Math.random() < 0.5) spawnX = cameraX - 50;
+        zombies.push({ x: spawnX, y: 300, hp: 20 });
+      }
+    }
 
-    // Animation loop
-    let camTarget = new THREE.Vector3();
-    function animate() {
-      if (!airplane) return;
-      airplane.rotation.y = yaw;
-      const forward = new THREE.Vector3(0,0,1).applyQuaternion(airplane.quaternion);
-      airplane.position.addScaledVector(forward, velocity * 0.1);
+    function gameLoop() {
+      const now = Date.now();
+      gameTime = Math.floor((now - startTime) / 1000);
 
-      // Chase camera
-      camTarget.copy(airplane.position)
-               .add(forward.clone().multiplyScalar(-100))
-               .add(new THREE.Vector3(0,40,0));
-      camera.position.lerp(camTarget, 0.1);
-      camera.lookAt(airplane.position);
+      // Update
+      if (isGameOver) return;
+      if (moveLeft) player.x -= 2;
+      if (moveRight) player.x += 2;
+      if (shoot && player.gunCooldown <= 0) {
+        bullets.push({ x: player.x + 10, y: player.y + 5 });
+        player.gunCooldown = 20;
+      }
+      if (player.gunCooldown > 0) player.gunCooldown--;
 
-      document.getElementById('speed').innerText = Math.round(velocity);
+      cameraX = player.x - canvas.width / 2;
 
-      renderer.render(scene, camera);
-      requestAnimationFrame(animate);
+      bullets.forEach((b, i) => {
+        b.x += 5;
+        zombies.forEach((z, zi) => {
+          if (Math.abs(b.x - z.x) < 15) {
+            z.hp -= 10;
+            bullets.splice(i, 1);
+          }
+        });
+      });
+
+      zombies.forEach((z, zi) => {
+        if (z.x > player.x) z.x -= 1;
+        else z.x += 1;
+        if (Math.abs(z.x - player.x) < 10) {
+          player.hp -= 5;
+          zombies.splice(zi, 1);
+          if (player.hp <= 0) endGame();
+        }
+        if (z.hp <= 0) {
+          player.kills++;
+          player.points += 100;
+          player.hp = Math.min(player.hp + 2, 150);
+          zombies.splice(zi, 1);
+        }
+      });
+
+      if (now - lastRegen > 60000) {
+        player.hp = Math.min(player.hp + 10, 150);
+        lastRegen = now;
+      }
+
+      // Draw
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Map
+      ctx.fillStyle = "#333";
+      for (let i = 0; i < mapWidth; i += 50) {
+        ctx.fillRect(i - cameraX, 350, 50, 50);
+      }
+
+      // Doors
+      doors.forEach(d => {
+        if (!d.unlocked) ctx.fillStyle = "brown";
+        else ctx.fillStyle = "#444";
+        ctx.fillRect(d.x - cameraX, 280, 20, 70);
+        if (!d.unlocked && Math.abs(d.x - player.x) < 20 && player.points >= d.cost) {
+          d.unlocked = true;
+          player.points -= d.cost;
+        }
+      });
+
+      // Player
+      ctx.fillStyle = "blue";
+      ctx.fillRect(player.x - cameraX, player.y, 20, 40);
+
+      // Gun
+      ctx.fillStyle = "gray";
+      ctx.fillRect(player.x - cameraX + 15, player.y + 10, 10, 5);
+
+      // Bullets
+      ctx.fillStyle = "yellow";
+      bullets.forEach(b => ctx.fillRect(b.x - cameraX, b.y, 5, 2));
+
+      // Zombies
+      ctx.fillStyle = "green";
+      zombies.forEach(z => ctx.fillRect(z.x - cameraX, z.y, 20, 40));
+
+      // HUD
+      ctx.fillStyle = "white";
+      ctx.fillText(`HP: ${player.hp}`, 10, 20);
+      ctx.fillText(`Kills: ${player.kills}`, 10, 40);
+      ctx.fillText(`Points: ${player.points}`, 10, 60);
+
+      spawnZombie();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+      isGameOver = true;
+      setTimeout(() => {
+        document.getElementById("gameOver").style.display = "flex";
+        document.getElementById("zombieCount").textContent = `Zombies killed: ${player.kills}`;
+        const mins = Math.floor(gameTime / 60).toString().padStart(2, '0');
+        const secs = (gameTime % 60).toString().padStart(2, '0');
+        document.getElementById("matchTime").textContent = `Time survived: ${mins}:${secs}`;
+        setTimeout(() => {
+          document.getElementById("gameOver").style.display = "none";
+          document.getElementById("menu").style.display = "flex";
+        }, 3000);
+      }, 1000);
     }
   </script>
 </body>
